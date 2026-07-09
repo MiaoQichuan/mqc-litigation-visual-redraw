@@ -1,0 +1,24 @@
+name: checks
+
+# 每次 push 或 PR 自动跑全部回归检查（零第三方依赖，仅需 Python + graphviz）。
+on:
+  push:
+  pull_request:
+
+jobs:
+  run-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install graphviz (needed by flowchart / relationship layouts)
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Run regression (all checks, no pip packages)
+        run: python tests/run_checks.py
