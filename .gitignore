@@ -1,0 +1,26 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ---- 临时渲染产物 ----
+final.svg
+final.png
+final.pdf
+*__png.pdf
+/out/
+/output/
+/renders/
+/scratch/
+*.tmp.svg
+*.tmp.png
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
