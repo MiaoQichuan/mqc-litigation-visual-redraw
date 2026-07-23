@@ -35,15 +35,19 @@ def node_layout(n):
     ch_ = len(lt)*LH_T + len(ld)*LH_L
     return lt, ld, cw_, ch_
 
+_THEME = None            # set by the dispatcher; "guizang" -> squarer, roomier boxes
+
 def box_size(n):
     lt, ld, cw_, ch_ = node_layout(n)
-    w, h = cw_ + 2*PADX, ch_ + 2*PADY
+    px, py = (26, 30) if _THEME == "guizang" else (PADX, PADY)   # 歸葬流: roomier, squarer
+    w, h = cw_ + 2*px, ch_ + 2*py
     if n.get("kind","step") == "decision":
-        # hexagon: full-height middle rect holds the text, angled ends on each side.
-        # Same height as a same-content step box (no extra inflation).
-        w, h = cw_ + 2*PADX + 2*HEX_INS, ch_ + 2*PADY
+        # hexagon / diamond: taller box so the shape reads as a real decision and,
+        # in 歸葬流, becomes a proper (non-flat) diamond whose vertices are exactly
+        # where connectors land.
+        w, h = cw_ + 2*px + 2*HEX_INS, ch_ + 2*py + 46
     if n.get("kind","step") == "terminal":
-        w, h = w + 24, ch_ + 2*PADY + 6
+        w, h = w + 24, ch_ + 2*py + 6
     return w, h
 
 def _aliases(m):
@@ -54,7 +58,7 @@ def _aliases(m):
 def build_dot(m):
     al = _aliases(m)
     L = ['digraph G {', f'  rankdir={m.get("direction","TB")}; splines=ortho;',
-         '  nodesep=0.85; ranksep=0.70;', '  node [shape=box, fixedsize=true];']
+         '  nodesep=0.85; ranksep=1.1;', '  node [shape=box, fixedsize=true];']
     # one uniform width for every STEP box: columns line up (fewer connector
     # bends) and the diagram stops mixing many box sizes.
     step_cw = [node_layout(n)[2] for n in m["nodes"] if n.get("kind", "step") == "step"]

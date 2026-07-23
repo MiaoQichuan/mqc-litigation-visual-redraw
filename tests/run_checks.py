@@ -18,7 +18,9 @@ SCRIPTS = os.path.join(HERE, "..", "scripts")
 sys.path.insert(0, SCRIPTS)
 
 import render_compare, render_points, render_spans, render_flow, render_relation, render_tree, render_dated  # noqa
+import export_drawio  # noqa
 import lint  # noqa
+import xml.dom.minidom as _MD  # noqa
 from common import text_w  # noqa
 
 FIX = os.path.join(HERE, "fixtures")
@@ -720,6 +722,475 @@ def _():
     assert "Forbidden" in t, "forbidden table missing from SKILL.md"
     for redline in ("hexagon", "#991B1B", "extraction-guide"):
         assert redline in t, f"red-line reference '{redline}' missing from SKILL.md"
+
+
+# ---- draw.io export (editable deliverable) ------------------------------
+# The .drawio export is an ADDITIVE, stdlib-only, editable artifact covering
+# all seven layouts. These guards fix what could regress: well-formed XML, no
+# dangling edges, counts faithful to the map, emphasis carried as deep red,
+# unknown layouts refused cleanly, the .drawio.svg staying a valid SVG with an
+# embedded editable model, the zero-graphviz fallback still placing every node,
+# and — the newly reported bug — text never sized to hug the box border.
+_GRAPH_EX = ["ex_flow.json", "ex_flow_parallel.json", "ex_relation.json", "ex_tree.json"]
+_ALL_EX = _GRAPH_EX + ["ex_points.json", "ex_dated.json", "ex_gantt.json"]
+# comparison-table has no fixture alias; load it straight from examples/
+import export_drawio as _dw  # noqa
+
+
+def _compare_map():
+    with open(os.path.join(EXAMPLES, "comparison-table.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+@check("drawio · all seven layouts export to well-formed mxGraphModel XML")
+def _dw_wellformed():
+    maps = [load(n) for n in _ALL_EX] + [_compare_map()]
+    for m in maps:
+        xml, _, _ = _dw.build_model(m)
+        doc = _MD.parseString(xml)   # raises if not well-formed
+        assert doc.getElementsByTagName("mxfile"), f"{m['layout']}: no <mxfile>"
+        assert doc.getElementsByTagName("mxGraphModel"), f"{m['layout']}: no <mxGraphModel>"
+
+
+@check("drawio · graph edges never reference a missing cell id")
+def _dw_no_dangling():
+    for name in _GRAPH_EX:
+        xml, _, _ = _dw.build_model(load(name))
+        doc = _MD.parseString(xml)
+        cells = doc.getElementsByTagName("mxCell")
+        ids = {c.getAttribute("id") for c in cells}
+        for c in cells:
+            if c.getAttribute("edge") == "1" and c.getAttribute("source"):
+                assert c.getAttribute("source") in ids and c.getAttribute("target") in ids, \
+                    f"{name}: dangling edge {c.getAttribute('id')}"
+
+
+@check("drawio · graph node & edge counts stay faithful to the map")
+def _dw_counts():
+    for name in _GRAPH_EX:
+        m = load(name)
+        xml, _, _ = _dw.build_model(m)
+        doc = _MD.parseString(xml)
+        cells = doc.getElementsByTagName("mxCell")
+        verts = [c for c in cells if c.getAttribute("vertex") == "1"
+                 and c.getAttribute("id") != "title"
+                 and not c.getAttribute("id").endswith("_note")]
+        edges = [c for c in cells if c.getAttribute("edge") == "1"]
+        assert len(verts) == len(m["nodes"]), f"{name}: {len(verts)} vs {len(m['nodes'])} nodes"
+        assert len(edges) == len(m["edges"]), f"{name}: {len(edges)} vs {len(m['edges'])} edges"
+
+
+@check("drawio · timelines/gantt/table produce the expected shape counts")
+def _dw_nongraph_shapes():
+    xml, _, _ = _dw.build_model(load("ex_points.json"))         # 7 events
+    assert xml.count('ellipse;') == 7, "numbered timeline: one marker per event"
+    g = _dw.build_model(load("ex_gantt.json"))[0]               # 7 spans
+    assert g.count('rounded=0;') >= 7, "gantt: one bar per span"
+    t = _dw.build_model(_compare_map())[0]                       # 3 rows x 2 cols + headers
+    assert t.count('vertex="1"') == 1 + (1 + 2) + 3 * (1 + 2), "compare: title+headers+cells"
+
+
+@check("drawio · emphasis is carried as the one deep red #991B1B")
+def _dw_emphasis_red():
+    assert "#991B1B" in _dw.build_model(load("ex_tree.json"))[0], "tree emphasis not red"
+    assert "#991B1B" in _dw.build_model(load("ex_gantt.json"))[0], "gantt emphasis not red"
+    clean = {"schema_version": 1, "layout": "graphviz_flow", "title_text": "t",
+             "nodes": [{"id": "a", "kind": "step", "title": "甲"},
+                       {"id": "b", "kind": "step", "title": "乙"}],
+             "edges": [{"from": "a", "to": "b"}]}
+    assert "#991B1B" not in _dw.build_model(clean)[0], "red leaked with no emphasis"
+
+
+@check("drawio · an unknown layout is refused cleanly")
+def _dw_refuse_unknown():
+    try:
+        _dw.build_model({"layout": "mind_map", "title_text": "x"})
+        assert False, "unknown layout should raise"
+    except RuntimeError as e:
+        assert "does not support" in str(e), f"unclear refusal: {e}"
+
+
+@check("drawio · .drawio.svg is a valid SVG embedding a well-formed model")
+def _dw_svg_embed():
+    m = load("ex_relation.json")
+    xml, _, _ = _dw.build_model(m)
+    svg, _, _ = render_relation.render(m)
+    hybrid = _dw.embed_in_svg(svg, xml)
+    doc = _MD.parseString(hybrid)
+    assert doc.documentElement.tagName == "svg", "hybrid root is not <svg>"
+    content = doc.documentElement.getAttribute("content")
+    assert content.strip().startswith("<mxfile"), "no embedded mxfile"
+    _MD.parseString(content)
+
+
+@check("drawio · export works with NO graphviz (stdlib fallback places every node)")
+def _dw_stdlib_fallback():
+    m = load("ex_flow.json")
+    sizes = {n["id"]: _dw._box_size(_dw._node_lines(n)) for n in m["nodes"]}
+    pos = _dw._positions_layered(m, sizes)
+    assert set(pos) == {n["id"] for n in m["nodes"]}, "fallback dropped a node"
+    for nid, (x, y) in pos.items():
+        assert abs(x) < 1e9 and abs(y) < 1e9, f"bad coord for {nid}"
+
+
+@check("drawio · text is never sized to hug the box border (anti-overlap)")
+def _dw_no_hug():
+    # every text-bearing vertex must be tall enough for its own <br> line count
+    # (guards the reported 'text too close to the border' regression)
+    maps = [load(n) for n in _ALL_EX] + [_compare_map()]
+    for m in maps:
+        doc = _MD.parseString(_dw.build_model(m)[0])
+        for c in doc.getElementsByTagName("mxCell"):
+            if c.getAttribute("vertex") != "1":
+                continue
+            val = c.getAttribute("value")
+            if not val:
+                continue
+            nlines = val.count("<br>") + 1
+            geo = c.getElementsByTagName("mxGeometry")
+            if not geo:
+                continue
+            h = float(geo[0].getAttribute("height") or 0)
+            fsm = re.search(r"fontSize=(\d+)", c.getAttribute("style"))
+            fs = int(fsm.group(1)) if fsm else _dw.NODE_FS
+            # need room for the lines at THIS cell's font size (draw.io won't
+            # re-wrap because we baked our own breaks and sized width w/ a fudge)
+            assert h >= nlines * fs + 2, \
+                f"{m['layout']} cell {c.getAttribute('id')}: h={h} too short for {nlines}x{fs}px"
+
+
+@check("drawio · positioned layouts tile without cell overlap")
+def _dw_positioned_no_overlap():
+    def _boxes(m):
+        doc = _MD.parseString(_dw.build_model(m)[0])
+        out = []
+        for c in doc.getElementsByTagName("mxCell"):
+            if c.getAttribute("vertex") != "1" or c.getAttribute("id") == "title":
+                continue
+            g = c.getElementsByTagName("mxGeometry")
+            if not g:
+                continue
+            f = lambda k: float(g[0].getAttribute(k) or 0)
+            out.append((c.getAttribute("id"), f("x"), f("y"), f("width"), f("height"),
+                        c.getAttribute("style")))
+        return out
+
+    def _ov(a, b):
+        ix = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+        iy = max(0, min(a[2] + a[4], b[2] + b[4]) - max(a[2], b[2]))
+        return ix > 2 and iy > 2
+
+    # numbered-timeline cards must not overlap one another
+    cards = [x for x in _boxes(load("ex_points.json")) if x[0].startswith("card")]
+    assert not any(_ov(cards[i], cards[j]) for i in range(len(cards)) for j in range(i + 1, len(cards))), \
+        "numbered timeline cards overlap"
+    # comparison-table cells tile cleanly (no overlaps, columns aligned)
+    cells = [x for x in _boxes(_compare_map())
+             if x[0].startswith(("cell", "dim", "hdr"))]
+    assert not any(_ov(cells[i], cells[j]) for i in range(len(cells)) for j in range(i + 1, len(cells))), \
+        "comparison cells overlap"
+    assert len({round(x[1]) for x in cells}) == 3, "comparison columns not aligned to 3 x-positions"
+    # gantt bars: one per row (distinct y per bar) and inside the axis band
+    bars = [x for x in _boxes(load("ex_gantt.json"))
+            if x[0].startswith("bar") and not x[0].startswith("barlbl")]
+    assert len({round(x[2]) for x in bars}) == len(bars), "gantt bars share a row"
+
+
+# ---- Step 2 · drawio timeline connectors ---------------------------------
+@check("drawio · timeline connectors stop at the marker edge (never cover the circle)")
+def _dw_connector_not_over_marker():
+    for name, r in (("ex_points.json", 17), ("ex_dated.json", 8)):
+        m = load(name)
+        doc = _MD.parseString(_dw.build_model(m)[0])
+        # collect marker circle centres (ellipse vertices) and connector endpoints
+        centres = []
+        for c in doc.getElementsByTagName("mxCell"):
+            if c.getAttribute("vertex") == "1" and "ellipse" in c.getAttribute("style"):
+                g = c.getElementsByTagName("mxGeometry")[0]
+                x, y = float(g.getAttribute("x")), float(g.getAttribute("y"))
+                w, h = float(g.getAttribute("width")), float(g.getAttribute("height"))
+                centres.append((x + w / 2, y + h / 2, w / 2))
+        for c in doc.getElementsByTagName("mxCell"):
+            if c.getAttribute("edge") != "1" or not c.getAttribute("id").startswith("cn"):
+                continue
+            pts = c.getElementsByTagName("mxPoint")
+            for p in pts:
+                px, py = float(p.getAttribute("x")), float(p.getAttribute("y"))
+                for cx, cy, rad in centres:
+                    if abs(px - cx) < 1:      # same column as this marker
+                        assert abs(py - cy) >= rad - 0.5, \
+                            f"{name}: connector endpoint enters the marker (dy={abs(py-cy)} < r={rad})"
+
+
+# ---- Step 2 · relation routing + labels (no overlap, no line through a node) ----
+@check("relation · routes avoid nodes, don't overlap, and labels never collide")
+def _rel_router_clean():
+    from common import text_w as _tw
+    import re as _re
+
+    def _pts(d):
+        return [(float(a), float(b)) for a, b in _re.findall(r'(-?\d+\.?\d*),(-?\d+\.?\d*)', d)]
+
+    for name in ("ex_relation.json", "edge_relation_dense.json"):
+        m = load(name)
+        svg, W, H = render_relation.render(m)
+        nodes = [(mm.group(1), float(mm.group(2)), float(mm.group(3)),
+                  float(mm.group(2)) + float(mm.group(4)), float(mm.group(3)) + float(mm.group(5)))
+                 for mm in _re.finditer(
+                     r'data-id="([^"]+)">\s*<rect x="([-\d.]+)" y="([-\d.]+)" width="([-\d.]+)" height="([-\d.]+)"', svg)]
+        paths = _re.findall(r'<path d="([^"]+)" fill="none"', svg)
+        fr = [e["from"] for e in m["edges"]]; to = [e["to"] for e in m["edges"]]
+
+        # 1) no segment crosses a non-endpoint node
+        segs = []
+        for i, d in enumerate(paths):
+            p = _pts(d)
+            for j in range(len(p) - 1):
+                segs.append((i, p[j], p[j + 1]))
+                (x0, y0), (x1, y1) = p[j], p[j + 1]
+                for nid, L, T, R, B in nodes:
+                    if i < len(fr) and nid in (fr[i], to[i]):
+                        continue
+                    if abs(x0 - x1) < 1 and L - 2 < x0 < R + 2 and min(y0, y1) < B - 2 and max(y0, y1) > T + 2:
+                        assert False, f"{name}: edge {i} runs through node {nid}"
+                    if abs(y0 - y1) < 1 and T - 2 < y0 < B + 2 and min(x0, x1) < R - 2 and max(x0, x1) > L + 2:
+                        assert False, f"{name}: edge {i} runs through node {nid}"
+
+        # 2) no two different edges share a collinear run (parallel overlap)
+        def _coll(s1, s2):
+            (i1, a1, b1), (i2, a2, b2) = s1, s2
+            if i1 == i2:
+                return False
+            if abs(a1[0] - b1[0]) < 1 and abs(a2[0] - b2[0]) < 1 and abs(a1[0] - a2[0]) < 5:
+                lo1, hi1 = sorted([a1[1], b1[1]]); lo2, hi2 = sorted([a2[1], b2[1]])
+                return min(hi1, hi2) - max(lo1, lo2) > 8
+            if abs(a1[1] - b1[1]) < 1 and abs(a2[1] - b2[1]) < 1 and abs(a1[1] - a2[1]) < 5:
+                lo1, hi1 = sorted([a1[0], b1[0]]); lo2, hi2 = sorted([a2[0], b2[0]])
+                return min(hi1, hi2) - max(lo1, lo2) > 8
+            return False
+        assert not any(_coll(segs[i], segs[j]) for i in range(len(segs)) for j in range(i + 1, len(segs))), \
+            f"{name}: two edges overlap on a collinear run"
+
+        # 3) labels wrap and never overlap a node or another label
+        blk = _re.search(r'<g data-role="edge-labels">(.*?)</g>', svg, _re.S)
+        labs = _re.findall(r'<text x="([-\d.]+)" y="([-\d.]+)"[^>]*text-anchor="(\w+)"[^>]*>([^<]+)</text>',
+                           blk.group(1)) if blk else []
+        blocks, cur = [], None
+        for x, y, an, t in labs:
+            x, y = float(x), float(y)
+            if cur and abs(cur["x"] - x) < 0.5 and (y - cur["ys"][-1]) < 30:
+                cur["ys"].append(y); cur["ts"].append(t)   # same block: same x AND adjacent y
+            else:
+                cur = {"x": x, "ys": [y], "ts": [t], "a": an}; blocks.append(cur)
+        assert len(blocks) == sum(1 for e in m["edges"] if e.get("label")), f"{name}: a label went missing"
+        lb = []
+        for b in blocks:
+            bw = max(_tw(t, 13) for t in b["ts"])
+            assert bw <= 168 + 16, f"{name}: an edge label was not wrapped"
+            L = b["x"] - (bw / 2 if b["a"] == "middle" else 0)
+            R = b["x"] + (bw / 2 if b["a"] == "middle" else bw)
+            lb.append((L, min(b["ys"]) - 13, R, max(b["ys"]) + 3))
+        nb = [(n[1], n[2], n[3], n[4]) for n in nodes]
+        def _ov(a, b, p=1):
+            return not (a[2] < b[0] + p or a[0] > b[2] - p or a[3] < b[1] + p or a[1] > b[3] - p)
+        assert not any(_ov(L, N) for L in lb for N in nb), f"{name}: a label overlaps a node"
+        assert not any(_ov(lb[i], lb[j]) for i in range(len(lb)) for j in range(i + 1, len(lb))), \
+            f"{name}: two labels overlap"
+
+        # 4) no label is crossed by any connector segment (labels never sit on a line)
+        for L in lb:
+            for i, d in enumerate(paths):
+                p = _pts(d)
+                for j in range(len(p) - 1):
+                    (x0, y0), (x1, y1) = p[j], p[j + 1]
+                    if abs(x0 - x1) < 1 and L[0] < x0 < L[2] and min(y0, y1) < L[3] and max(y0, y1) > L[1]:
+                        assert False, f"{name}: a label is crossed by a connector line"
+                    if abs(y0 - y1) < 1 and L[1] < y0 < L[3] and min(x0, x1) < L[2] and max(x0, x1) > L[0]:
+                        assert False, f"{name}: a label is crossed by a connector line"
+
+
+# ---- Step 2 · relation deliberate layout ---------------------------------
+@check("relation · layout centres a dominant hub, keeps source order, aligns rows")
+def _rel_layout():
+    # simple/linear graph keeps SOURCE ORDER left-to-right (not scrambled by degree)
+    m = load("ex_relation.json")
+    pos, sizes = render_relation._layout_nodes(m)
+    order_by_x = [i for i, _ in sorted(pos.items(), key=lambda kv: kv[1][0])]
+    src = [n["id"] for n in m["nodes"]]
+    assert order_by_x == src, f"linear graph reordered: {order_by_x} vs {src}"
+
+    # dense graph with a clear hub → hub is horizontally central + rows aligned
+    md = load("edge_relation_dense.json")
+    pos2, _ = render_relation._layout_nodes(md)
+    deg = {}
+    for e in md["edges"]:
+        deg[e["from"]] = deg.get(e["from"], 0) + 1
+        deg[e["to"]] = deg.get(e["to"], 0) + 1
+    hub = max(deg, key=deg.get)
+    xs = [p[0] for p in pos2.values()]
+    cx = (min(xs) + max(xs)) / 2
+    # hub sits nearer the horizontal centre than the average node
+    hub_off = abs(pos2[hub][0] - cx)
+    avg_off = sum(abs(p[0] - cx) for p in pos2.values()) / len(pos2)
+    assert hub_off <= avg_off, f"hub not central (off {hub_off:.0f} vs avg {avg_off:.0f})"
+    # rows are aligned: only a few distinct y bands, each shared by ≥1 node
+    ybands = sorted({round(p[1]) for p in pos2.values()})
+    assert len(ybands) <= 3, f"rows not aligned into tidy bands: {ybands}"
+
+
+@check("relation · no module side carries 3+ edges (hub spreads across its borders)")
+def _rel_side_spread():
+    import re as _re
+    m = load("edge_relation_dense.json")
+    svg, W, H = render_relation.render(m)
+    nodes = {mm.group(1): (float(mm.group(2)), float(mm.group(3)),
+                           float(mm.group(2)) + float(mm.group(4)), float(mm.group(3)) + float(mm.group(5)))
+             for mm in _re.finditer(
+                 r'data-id="([^"]+)">\s*<rect x="([-\d.]+)" y="([-\d.]+)" width="([-\d.]+)" height="([-\d.]+)"', svg)}
+    paths = _re.findall(r'<path d="([^"]+)" fill="none"', svg)
+    def _pts(d):
+        return [(float(a), float(b)) for a, b in _re.findall(r'(-?\d+\.?\d*),(-?\d+\.?\d*)', d)]
+    from collections import Counter
+    side = Counter()
+    for i, d in enumerate(paths):
+        e = m["edges"][i]; p = _pts(d)
+        for endpt, nid in ((p[0], e["from"]), (p[-1], e["to"])):
+            if nid not in nodes:
+                continue
+            L, T, R, B = nodes[nid]
+            if abs(endpt[0] - L) < 3:   side[(nid, "L")] += 1
+            elif abs(endpt[0] - R) < 3: side[(nid, "R")] += 1
+            elif abs(endpt[1] - T) < 3: side[(nid, "T")] += 1
+            elif abs(endpt[1] - B) < 3: side[(nid, "B")] += 1
+    worst = max(side.values()) if side else 0
+    assert worst <= 2, f"a module side carries {worst} edges (should spread ≤2 per side): {[(k,v) for k,v in side.items() if v>=3]}"
+
+
+# ---- 白描 (monochrome court/print mode) ----------------------------------
+@check("白描 · monochrome mode is pure black line-art, geometry byte-identical")
+def _baimiao_mode():
+    import re as _re
+    import render as _render
+    for name in ("ex_flow.json", "ex_relation.json", "ex_tree.json"):
+        m = load(name)
+        mod = _render.choose(m)
+        colour, _, _ = mod.render(m)
+        mono = _render.to_monochrome(colour)
+        # 1. no colour survives: fills are white or ink-black, strokes are ink-black,
+        #    and the deep red is gone
+        assert "#991B1B" not in mono.upper(), f"{name}: red survived 白描"
+        fills = set(_re.findall(r'fill="(#[0-9A-Fa-f]{6})"', mono))
+        strokes = set(_re.findall(r'stroke="(#[0-9A-Fa-f]{6})"', mono))
+        assert fills <= {"#FFFFFF", "#111111"}, f"{name}: stray fill colour {fills}"
+        assert strokes <= {"#111111"}, f"{name}: stray stroke colour {strokes}"
+        # 2. geometry is identical — only colour / stroke-weight / added hairlines change
+        strip = lambda s: _re.sub(r"\s+", " ", _re.sub(r'(?:fill|stroke|stroke-width)="[^"]*"', "", s))
+        assert strip(colour) == strip(mono), f"{name}: 白描 changed geometry, not just colour"
+
+
+# ---- 歸葬流 (Guizang Swiss / IKB theme) -----------------------------------
+@check("歸葬流 · blue/grey/white only, blue diamond decision, top margin, mono Latin")
+def _guizang_mode():
+    import re as _re
+    import render as _render
+    THEME = {"#FAFAF8", "#333333", "#737373", "#BDBDBD", "#D4D4D2", "#E0E0E0", "#002FA7", "#FFFFFF"}
+    for name in ("ex_flow.json", "ex_relation.json", "ex_tree.json"):
+        m = load(name)
+        mod = _render.choose(m)
+        try:
+            mod._THEME = "guizang"
+            colour, _, _ = mod.render(m)
+        finally:
+            mod._THEME = None
+        svg = _render.to_guizang(colour)
+        # 1. strictly blue / grey / white — no other colour survives
+        cols = set(_re.findall(r'(?:fill|stroke)="(#[0-9A-Fa-f]{6})"', svg))
+        assert cols <= THEME, f"{name}: 歸葬流 has off-palette colour {cols - THEME}"
+        # 2. a top margin (天头) was reserved for the big title
+        assert 'transform="translate(0,60)"' in svg, f"{name}: 歸葬流 reserved no top margin"
+        # 3. the Song serif is gone (sans/mono only)
+        assert "宋体" not in svg and "Songti" not in svg, f"{name}: serif survived into 歸葬流"
+        if name == "ex_flow.json":
+            # decision is a 4-point blue DIAMOND, and there is at least one solid blue block
+            assert _re.search(r'<path d="M [\d.]+,[\d.]+ L [\d.]+,[\d.]+ L [\d.]+,[\d.]+ L [\d.]+,[\d.]+ Z" fill="#002FA7"', svg), \
+                f"{name}: decision is not a blue diamond"
+            assert svg.count('fill="#002FA7"') >= 2, f"{name}: expected solid blue blocks (terminals/diamond)"
+
+
+# ---- drawio theming ------------------------------------------------------
+@check("drawio export follows the visual mode (白描 mono / 歸葬流 blue-grey), 奇川流 untouched")
+def _drawio_themes():
+    import re as _re
+    import export_drawio as _ex
+    for name in ("ex_flow.json", "ex_relation.json", "ex_tree.json"):
+        m = load(name)
+        base, _, _ = _ex.build_model(m)
+        cols = lambda x: {c.upper() for c in _re.findall(r'Color=(#[0-9A-Fa-f]{6})', x)}
+        # colour master is left exactly as-is
+        assert _ex.theme_drawio(base, None) == base, f"{name}: theme_drawio touched 奇川流"
+        # 白描 — black line-art only
+        mono = cols(_ex.theme_drawio(base, "baimiao"))
+        assert mono <= {"#FFFFFF", "#111111"}, f"{name}: 白描 drawio stray {mono}"
+        # 歸葬流 — blue / grey / white only
+        _d = {n["id"]: 0 for n in m["nodes"]}
+        for _e in m.get("edges", []):
+            if _e.get("from") in _d: _d[_e["from"]] += 1
+            if _e.get("to") in _d: _d[_e["to"]] += 1
+        _hub = None
+        if _d:
+            _hid = max(_d, key=lambda i: _d[i])
+            _hub = "c%d" % [n["id"] for n in m["nodes"]].index(_hid)
+        gz = cols(_ex.theme_drawio(base, "guizang", _hub))
+        allowed = {"#002FA7", "#333333", "#737373", "#BDBDBD", "#D4D4D2", "#FFFFFF"}
+        assert gz <= allowed, f"{name}: 歸葬流 drawio stray {gz - allowed}"
+        assert "#002FA7" in gz, f"{name}: 歸葬流 drawio lost its blue"
+        # structure untouched — only colours changed
+        strip = lambda x: _re.sub(r'(?:fill|stroke|font)Color=#[0-9A-Fa-f]{6}', '', x)
+        assert strip(_ex.theme_drawio(base, "guizang", _hub)) == strip(base), \
+            f"{name}: theme_drawio altered structure, not just colour"
+
+
+# ---- long text / overflow ------------------------------------------------
+@check("over-long titles wrap instead of running off the canvas; notes reserve real room")
+def _long_text():
+    import re as _re, json as _json, subprocess, sys, pathlib, tempfile
+    import render as _render
+    root = pathlib.Path(__file__).resolve().parent.parent
+    m = _json.loads((root / "examples" / "comparison-table.json").read_text())
+    m["title_text"] = "关于某某市某某区某某工程建设项目施工合同纠纷一案二审判决与再审裁定裁判要旨逐项对比分析表"
+    mod = _render.choose(m)
+    svg, w, h = mod.render(m)
+    fitted = _render.fit_title(svg)
+    # the title is split into >1 tspan and the canvas grew to hold them
+    assert fitted.count("<tspan") >= 2, "over-long title was not wrapped"
+    nh = int(_re.search(r'<svg[^>]*height="(\d+)"', fitted).group(1))
+    assert nh > h, "canvas did not grow for the wrapped title"
+    # and no text runs off the canvas any more
+    with tempfile.NamedTemporaryFile("w", suffix=".svg", delete=False) as f:
+        f.write(fitted); p = f.name
+    r = subprocess.run([sys.executable, str(root / "scripts" / "lint.py"), p],
+                       capture_output=True, text=True, timeout=60)
+    assert "overflows canvas" not in r.stdout, f"still overflowing: {r.stdout}"
+    # a short title is left completely alone
+    m2 = _json.loads((root / "examples" / "comparison-table.json").read_text())
+    s2, _, _ = _render.choose(m2).render(m2)
+    assert _render.fit_title(s2) == s2, "fit_title touched a title that already fits"
+
+
+# ---- environment doctor --------------------------------------------------
+@check("doctor.py runs, reports every dependency, and gates on required tooling")
+def _doctor():
+    import subprocess, sys, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    r = subprocess.run([sys.executable, str(root / "scripts" / "doctor.py")],
+                       capture_output=True, text=True, timeout=60)
+    out = r.stdout
+    for needle in ("Python", "graphviz", "PNG rasteriser", "IBM Plex Mono", "Result:"):
+        assert needle in out, f"doctor.py never reported {needle!r}"
+    assert r.returncode in (0, 1), f"doctor.py exited {r.returncode}"
+    # exit code must reflect REQUIRED tooling only
+    assert (r.returncode == 0) == ("MISSING REQUIRED" not in out), \
+        "doctor.py exit code disagrees with its own report"
 
 
 # ---- report -------------------------------------------------------------

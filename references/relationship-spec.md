@@ -87,6 +87,81 @@ locked by `tree-std` regression guards — do not loosen it:
 Use `relation_tree` when the source is a hierarchy; use `graphviz_relation` for a
 free-form network of labeled relationships.
 
+## Node layout — frozen standard (`graphviz_relation`)
+
+For a relationship network, the renderer **places the nodes itself**
+(`_layout_nodes`, deterministic, **no graphviz needed**) before routing. Fixing
+the layout first is what keeps the connectors orderly — you cannot route cleanly
+on top of a scattered layout. The method (locked by the `relation · layout` guard):
+
+1. **Find the hub.** The node with the **most relationships** (highest degree) is
+   the party everything connects to; in a dense graph its four sides all become
+   line endpoints, so it belongs in the **centre**.
+2. **Place on an aligned, near-rectangular grid.** Nodes sit on a grid of ≈3 per
+   row (3, 3+1, 3+2, 2+2 …). **Every row shares one vertical position** and one
+   column pitch, so rows read as tidy bands and the whole reads as a horizontal
+   rectangle. A **dominant** hub (degree clearly above the rest, in a graph of ≥5)
+   is dropped into the central slot; otherwise nodes keep their **source order**
+   row-major, so a simple/linear diagram (甲→乙→丙) is never scrambled by degree.
+3. **Moderate, controlled spacing.** Column and (especially) **row** gaps are kept
+   controlled and uniform — enough that notes under a node and labels beside a
+   vertical line have room, not so much that the diagram sprawls.
+4. Notes under a node MAY cross a vertical connector (unavoidable, acceptable);
+   an edge's explanation LABEL never does (see the label standard below).
+5. Arrowheads point from `from` to `to`, landing exactly on the target's border.
+
+## Connector routing — frozen standard (`graphviz_relation`)
+
+graphviz places the NODES; the renderer routes every connector itself
+(`_route_edges` in `render_relation.py`). Routing is a **fixed standard**, locked
+by the `relation · routes avoid nodes…` guard against a high-density stress
+fixture (`edge_relation_dense.json`). The rules — general, not fitted to one
+diagram — are:
+
+1. **Orthogonal only.** Every segment is horizontal or vertical; corners carry the
+   skill's tiny r≈2.5 rounding. No diagonal, no curve, no spline.
+2. **Clean route first; land on the border.** An edge leaves a node's border and
+   enters the target from the side **facing the source**, ending **exactly on that
+   border line** (the arrowhead sits on the edge, never inside/occluded). It tries,
+   in order, a straight run → a direct L/Z toward the near side → (only if that
+   would cross a node) a **tight detour around the nearer side** → a bottom trunk.
+   A connector never passes over a box that is not its own endpoint, and it never
+   takes a sweeping detour when a direct route is clear.
+3. **Border-centre by default; minimal on-border offset only for parallels.** A
+   lone edge attaches at the **dead centre** of its border side. When several edges
+   share one side, extras take a **small offset that stays strictly on the border
+   line** (clamped inside the corners) — never pushed off the module edge.
+4. **Lanes are separated.** Parallel mid-trunks that would share a line are offset
+   into distinct lanes (pitch ≈16px), so **no two edges ever run on top of each
+   other**. Verified by geometry: parallel-overlap = 0.
+5. **Straight stub into every arrowhead.** The last run into a node (and the first
+   run out of it) is a straight segment — no corner sits next to the arrowhead, so
+   heads never look bent or distorted.
+
+## Edge-label placement — frozen standard
+
+Labels are wrapped and placed AFTER routing (`place_edge_labels`), and the rules
+are locked by the same guard (label-vs-node, label-vs-label, and
+label-crossed-by-a-line all = 0). The label of an edge:
+
+1. **Wraps; the line is never lengthened to fit text.** Above-labels wrap to
+   ~176px, side-labels wrap NARROWER (~150px) so they sit compactly on one side.
+2. **Sits wholly on ONE side of its line and never crosses it.** A label on a
+   horizontal run goes ENTIRELY above that run; a label on a vertical run goes
+   ENTIRELY to one side — the side **away from the node cluster** — and is
+   left-aligned so it reads outward from the line.
+3. **Keeps a real gap from the line**, and **red / emphasis labels sit further
+   out** (more vertical breathing room) than plain gray ones.
+4. **Nudges only AWAY from its line**, by a bounded amount, to dodge nodes, other
+   labels and every connector segment — it never flies far and never moves onto
+   the line. In the rare fully-crowded case it takes the least-conflicting spot.
+5. The canvas reserves **horizontal room on both sides** for outward side-labels,
+   so a label beside a detour line never runs off-canvas.
+
+These routing and label rules are **skill-wide standards**, not per-diagram
+tweaks: they are enforced on every `graphviz_relation` render by the regression
+guard, using a deliberately dense, fully-anonymized stress case.
+
 ---
 
 > **把法律画出来 · Make the Law Visible** ｜ 新诉讼可视化 New Litigation Visualization ｜ 缪奇川 出品 ｜ v1.0.0

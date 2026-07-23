@@ -23,6 +23,7 @@ FS_DIM = FS["subtitle"]        # dimension label (left gutter)
 FS_CELL = FS["node_title"]     # cell body
 LH = 23
 PADX, PADY = 18, 14
+_THEME = None
 DIM_W = 150                    # left gutter width for the dimension label
 COL_W = 300                    # each comparison column
 COL_GAP = 26
@@ -57,7 +58,7 @@ def render(m):
         cell_lines = {c: _wrap_cell(r["cells"].get(c, ""), COL_W) for c in cid}
         dim_lines = wrap(r.get("dimension", ""), FS_DIM, DIM_W - 8)
         n = max([len(v) for v in cell_lines.values()] + [len(dim_lines)] + [1])
-        row_h.append(n * LH + 2 * PADY)
+        row_h.append(n * LH + 2 * (24 if _THEME == "guizang" else PADY))
         row_lines.append((dim_lines, cell_lines))
 
     header_h = max(len(wrap(c["title"], FS_H, COL_W - 2 * PADX)) for c in cols) * LH + 2 * PADY

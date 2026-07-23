@@ -165,3 +165,100 @@ like typeset copy, not a raw character dump:
 - Groups carry `data-role` / `data-id` so the SVG can be edited downstream.
 - No raster of the dirty source embedded as a backdrop; no whole-image base64.
 $\n---\n\n> **把法律画出来 · Make the Law Visible** ｜ 新诉讼可视化 New Litigation Visualization ｜ 缪奇川 出品 ｜ v1.0.0
+
+## 白描 mode (court / print) — frozen standard
+
+`白描` (bái-miáo, "ink-outline drawing") is the sober, print-first variant for
+court bundles. It is **not a different renderer**: it takes the exact 奇川流
+output and applies one deterministic colour transform (`to_monochrome` in
+`render.py`), so **geometry, layout, spacing, routing and labels are byte-for-byte
+identical** — only colour changes. The transform:
+
+- every colour → **black ink** (`#111111`); the deep red is gone;
+- every **solid colour block → an outline module** (white fill + black border) —
+  cards, decision hexagons, gantt bars, depth-shaded tree boxes all become frames;
+- **markers/point-dots stay solid black**; connectors and arrowheads are black.
+
+Emphasis still reads without colour, because it already carries a **thicker stroke
+and bolder weight** (now black instead of red). Invoke with `--baimiao` (aliases
+`--mono` / `--print` / `--court`) or set `"visual_mode": "白描"` in the semantic
+map. Locked by the `白描 · monochrome mode …` guard (colours reduced to black/white
+AND geometry identical to the colour master).
+
+## 歸葬流 mode (Guizang Swiss / IKB) — frozen standard
+
+`歸葬流` is the **online / lecture / social-sharing** variant, adapted from blogger
+歸葬's "Swiss International" PPT aesthetic. Like 白描 it reuses 奇川流's **engineering
+path** (layout + routing geometry) — but 奇川流's *visual* choices do **not** bind it;
+歸葬流 is a genuine artistic treatment with its own surface, applied by `to_guizang`
+in `render.py` (plus a theme-aware, roomier box padding in the renderers, keyed off
+`_THEME`). Invoke with `--guizang` (aliases `--swiss` / `--ikb`) or set
+`"visual_mode": "歸葬流"`.
+
+Frozen rules (locked by the `歸葬流 · …` guard):
+
+- **Palette — Klein blue + grey + white, nothing else.** Accent `#002FA7` (IKB),
+  paper `#FAFAF8`, dark-grey ink `#333333`, secondary grey `#737373`, hairline
+  border `#D4D4D2`, soft connector grey `#BDBDBD`, white. The guard rejects any
+  off-palette colour, so timeline / gantt / comparison shading is remapped in too.
+- **Solid colour blocks (used liberally, never flooded).** The decision node is a
+  **solid blue DIAMOND** with white text (its vertices are exactly where connectors
+  land, so heads are never swallowed); flow **terminals are solid blue** blocks;
+  ordinary modules are white with a light-grey hairline border. Sharp corners (no
+  small radii); the terminal stadium shape is kept.
+- **Type — "the larger, the lighter."** Sans (Inter / Noto Sans SC) for CJK; the
+  **doc title is big, weight-300, centred**, with a reserved top margin (天头).
+  **Numbers and English use IBM Plex Mono** — the engineered Latin texture. No serif.
+- **Connectors + arrowheads are soft grey** — blue is reserved for blocks, never
+  lines.
+- **A faint IKB dot-matrix background** (26 px grid) supplies the Swiss "artistic"
+  layer without competing with content.
+- **Roomier, squarer modules**: 歸葬流 renders with larger box padding than 奇川流
+  (theme-aware), so blocks read as substantial Swiss modules rather than thin cards.
+
+奇川流 (colour master) and 白描 (mono) are **byte-for-byte unaffected** — the theme
+only engages when 歸葬流 is requested.
+
+### 歸葬流 — per-figure detail (finalised)
+
+- **Blue is emphasis only** (one accent, never flooded), always with white text:
+  flowchart decision *diamond* + terminals; relation **hub** node (tagged
+  `data-emph="1"` by the renderer); timeline **key event**; gantt **key period**
+  band. Everything else is neutral white / grey.
+- **Timeline time-band**: light-grey `#E0E0E0`, thickened; ticks span the full band
+  in dark grey `#737373`, year numbers dark-grey and vertically centred; connector
+  stems are visible light grey `#BDBDBD` and are drawn **behind** the band (the band
+  occludes them, they don't cross over it).
+- **Gantt period bars** are colour BANDS: key period = solid blue + white text,
+  ordinary periods = light-grey `#E0E0E0`.
+- **Numbers / English** render in **IBM Plex Mono** (installed from `@fontsource`);
+  CJK stays sans. If the mono face is unavailable the SVG still references it and
+  falls back to a system monospace.
+- **Squarer modules**: every renderer takes a larger vertical padding under
+  `_THEME == "guizang"` (flow / relation / tree / timeline cards / comparison),
+  so blocks read as substantial Swiss modules. 奇川流 padding is untouched.
+- Palette whitelist (guard-enforced): `#FAFAF8 #333333 #737373 #BDBDBD #D4D4D2
+  #E0E0E0 #002FA7 #FFFFFF` — nothing else may appear.
+
+### 白描 — filled-shape & marker rules (finalised)
+
+- A **filled bar/box that has no border** (gantt period bars, the timeline
+  time-band) would disappear as a white fill, so 白描 gives every positioned,
+  border-less rect a **hairline black border** — it reads as an outlined long box.
+- **Numbered timeline circles become RINGS**: white fill + black border, with the
+  number drawn black inside (a solid black disc would hide the digit).
+
+### Comparison / showcase ordering (canonical)
+
+Every side-by-side comparison is ordered **奇川流 (left) · 歸葬流 (middle) ·
+白描 (right)** — colour master first, the two derived modes after.
+
+### Editable .drawio follows the mode
+
+The `.drawio` / `.drawio.svg` export is themed to match the figure the user was
+given (`theme_drawio` in `export_drawio.py`): 白描 exports white fills with black
+strokes and text; 歸葬流 exports the blue/grey/white palette, promoting the **hub
+node to a solid blue block with white text** (a relation map has no dark fill to
+map, so the key party carries the accent, exactly as in the SVG). 奇川流 is left
+byte-identical. Only colours change — ids, geometry and structure are untouched,
+so the file still opens and edits normally in draw.io.

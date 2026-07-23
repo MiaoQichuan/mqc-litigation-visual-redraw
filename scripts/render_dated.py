@@ -18,6 +18,7 @@ from common import C, FS, RADIUS, TITLE_FONT, esc, wrap, svg_open, load_map, par
 
 CARD_W = 214
 PAD_X, PAD_Y = 16, 13
+_THEME = None
 LH = 22
 BAR_H = 14                 # light-gray axis bar (slightly thick, not heavy)
 BAR_FILL = "#E5E7EB"
@@ -59,7 +60,7 @@ def card_lines(ev):
 
 def card_h(ev):
     head = (FS_DATE + 8) if ev.get("date_text") else 0
-    return PAD_Y * 2 + head + len(card_lines(ev)) * LH
+    return (26 if _THEME == "guizang" else PAD_Y) * 2 + head + len(card_lines(ev)) * LH
 
 
 def render(m):
@@ -145,7 +146,7 @@ def render(m):
         else:
             S.append(f'<rect x="{cx-CARD_W/2:.1f}" y="{top:.1f}" width="{CARD_W}" height="{h}" rx="{RX}" '
                      f'fill="{fill}" stroke="{C["card_stroke"]}" stroke-width="1.2"/>')
-        ty = top + PAD_Y + FS_DATE
+        ty = top + (26 if _THEME == "guizang" else PAD_Y) + FS_DATE
         if ev.get("date_text"):
             S.append(f'<text x="{cx:.1f}" y="{ty:.1f}" font-size="{FS_DATE}" font-weight="600" '
                      f'fill="{date_col}" text-anchor="middle">{esc(ev["date_text"])}</text>')

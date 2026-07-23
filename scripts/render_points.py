@@ -11,6 +11,7 @@ from common import C, FS, RADIUS, TITLE_FONT, esc, wrap, svg_open, load_map
 
 CARD_W = 214
 PAD_X, PAD_Y = 16, 13
+_THEME = None
 LH = 22
 R = 24                    # numbered circle radius
 CONNECT = 60              # axis -> card gap
@@ -28,7 +29,7 @@ def card_lines(ev):
 
 def card_h(ev):
     head = (FS_DATE + 8) if ev.get("date_text") else 0
-    return PAD_Y * 2 + head + len(card_lines(ev)) * LH
+    return (26 if _THEME == "guizang" else PAD_Y) * 2 + head + len(card_lines(ev)) * LH
 
 
 def render(m):
@@ -69,7 +70,7 @@ def render(m):
         else:     # clean white card, thin gray border, small radius
             S.append(f'<rect x="{cx-CARD_W/2}" y="{top}" width="{CARD_W}" height="{h}" rx="{RX}" '
                      f'fill="{fill}" stroke="{C["card_stroke"]}" stroke-width="1.2"/>')
-        ty = top + PAD_Y + FS_DATE
+        ty = top + (26 if _THEME == "guizang" else PAD_Y) + FS_DATE
         if ev.get("date_text"):
             S.append(f'<text x="{cx}" y="{ty}" font-size="{FS_DATE}" font-weight="600" '
                      f'fill="{date_col}" text-anchor="middle">{esc(ev["date_text"])}</text>')

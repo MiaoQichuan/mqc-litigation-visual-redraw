@@ -22,6 +22,7 @@ FS_NOTE = FS["subtitle"]          # 13
 FS_EDGE = FS["edge_label"]        # 13
 LH_T, LH_NOTE = 22, 20
 PADX, PADY = 20, 14
+_THEME = None
 MINW = 132
 MAXW = 230
 FORK = 26                          # bus distance below a parent
@@ -147,7 +148,7 @@ def render(m):
         cw_by[n["id"]] = cw
 
     # UNIFORM height for every box, so no level looks thicker than another
-    uni_h = max(len(lines_by[n["id"]]) for n in m["nodes"]) * LH_T + 2 * PADY
+    uni_h = max(len(lines_by[n["id"]]) for n in m["nodes"]) * LH_T + 2 * (26 if _THEME == "guizang" else PADY)
     # UNIFORM width PER LEVEL, so boxes line up in tidy columns instead of jumping
     level_w = {}
     for n in m["nodes"]:
