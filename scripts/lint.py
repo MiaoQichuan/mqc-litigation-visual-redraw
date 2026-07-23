@@ -56,6 +56,25 @@ def lint_svg(svg, w=None, h=None):
             if x < -tol or y < -tol or x > w + tol or y > h + tol:
                 warns.append(f"text anchor off-canvas at x={x:.0f},y={y:.0f} vs {w:.0f}x{h:.0f}")
 
+        # 2b. text whose RENDERED WIDTH spills off the canvas. The anchor can sit
+        # comfortably inside while the glyphs run past the edge — that is exactly how
+        # an over-long title or note gets clipped, so check the extent, not the point.
+        for mm in re.finditer(rf'<text ([^>]*?)x="({_NUM})"([^>]*?)>([^<]*)</text>', svg):
+            attrs = mm.group(1) + mm.group(3)
+            fsm = re.search(rf'font-size="({_NUM})"', attrs)
+            if not fsm:
+                continue
+            x, fs, txt = float(mm.group(2)), float(fsm.group(1)), mm.group(4)
+            am = re.search(r'text-anchor="(\w+)"', attrs)
+            anchor = am.group(1) if am else "start"
+            if not txt.strip():
+                continue
+            # CJK ≈ full em, Latin ≈ 0.55 em
+            tw = sum(fs if ord(c) > 0x2E80 else fs * 0.55 for c in txt)
+            left = x - tw / 2 if anchor == "middle" else (x - tw if anchor == "end" else x)
+            if left < -tol or left + tw > w + tol:
+                warns.append(f'text overflows canvas: "{txt[:18]}…" ({tw:.0f}px) at x={x:.0f} vs {w:.0f}')
+
     # 3. arrowed path that is a single diagonal segment (should be orthogonal)
     for mm in re.finditer(r'<path d="([^"]+)"[^>]*marker-end=', svg):
         d = mm.group(1)

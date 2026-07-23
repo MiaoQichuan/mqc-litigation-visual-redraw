@@ -12,6 +12,7 @@ JSON contains no x/y.
   "diagram_type": "timeline",
   "layout": "numbered_point_timeline | dated_point_timeline | proportional_gantt",
   "title_text": "…",            // neutral chart name; verbatim if source had one
+  "visual_mode": "奇川流",        // OPTIONAL — 奇川流 (default) | 白描 (court/print) | 歸葬流 (online/lecture); set from the checkpoint. CLI --baimiao / --guizang override.
   "axis": { … },                // gantt only (see below)
   "axis_unit": "year | month",  // dated_point_timeline only, optional (auto by span)
   "events": [ … ],              // point layouts (numbered / dated)

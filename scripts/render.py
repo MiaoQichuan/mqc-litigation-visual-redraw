@@ -13,7 +13,9 @@ SVG is the primary, editable deliverable. PNG is derived for preview/filing.
 """
 import sys, os, re, shutil, subprocess
 from common import load_map, validate_map, TITLE_FONT
+import math
 import render_points, render_spans, render_flow, render_relation, render_tree, render_dated, render_compare
+import export_drawio
 
 
 def _best_installed_song():
@@ -133,10 +135,296 @@ def svg_to_png(svg_path, png_path, dpi=150):
                        "inkscape, or LibreOffice(soffice)+pdftoppm (recommended for CJK).")
 
 
-def main(mapfile, base="final", strict=False):
+def to_monochrome(svg):
+    """白描 (bái-miáo) — the court / print mode. Takes the EXACT 奇川流 output and
+    recolours it to pure black line-art: every colour becomes black ink, every
+    solid colour block becomes an OUTLINE module (white fill), markers/dots stay
+    solid black. Geometry, layout, spacing, labels — everything else — is byte-for
+    -byte identical; only colour changes. Emphasis still reads, since it already
+    carries a thicker stroke and bolder weight (now in black instead of red)."""
+    INK = "#111111"
+    # text -> black ink
+    svg = re.sub(r'(<text\b[^>]*?) fill="[^"]*"', r'\1 fill="' + INK + '"', svg)
+    # rectangles + filled shape-paths (modules, hexagons, bars) -> white = outline
+    svg = re.sub(r'(<rect\b[^>]*?) fill="[^"]*"', r'\1 fill="#FFFFFF"', svg)
+    svg = re.sub(r'(<path\b[^>]*?) fill="#[0-9A-Fa-f]{6}"', r'\1 fill="#FFFFFF"', svg)
+    # circles (numbered timeline markers) -> RINGS: white fill + black border, so the
+    # number inside stays readable (a solid black disc would hide it).
+    def _ring(cm):
+        c = re.sub(r' fill="[^"]*"', ' fill="#FFFFFF"', cm.group(0))
+        return c if "stroke=" in c else c[:-2] + f' stroke="{INK}" stroke-width="1.8"/>'
+    svg = re.sub(r'<circle\b[^>]*?/>', _ring, svg)
+    # emphasis line drops to normal weight in 白描 (no heavy bottom rule)
+    svg = re.sub(r'stroke-width="3"', 'stroke-width="2"', svg)
+    # every coloured stroke -> black
+    svg = re.sub(r'stroke="#[0-9A-Fa-f]{6}"', 'stroke="' + INK + '"', svg)
+    # a filled bar/box with NO border (gantt period bars, timeline band) would vanish
+    # as a white fill — give it a hairline so it reads as an OUTLINED long box.
+    def _outline(rm):
+        r = rm.group(0)
+        return r if "stroke=" in r else r[:-2] + f' stroke="{INK}" stroke-width="1.2"/>'
+    svg = re.sub(r'<rect\b(?=[^>]*\sx=")[^>]*?/>', _outline, svg)
+    # arrowheads live inside <marker> and were just whitened — make them black again
+    svg = re.sub(r'<marker\b.*?</marker>',
+                 lambda mm: mm.group(0).replace('fill="#FFFFFF"', 'fill="' + INK + '"'),
+                 svg, flags=re.S)
+    return svg
+
+
+def to_guizang(svg):
+    """歸葬流 — the Guizang "Swiss International" theme (for online / lecture /
+    social sharing). Same 奇川流 geometry & layout; only the surface changes:
+      · sans-serif type (Inter / Noto Sans SC), replacing the Song serif;
+      · Klein-blue #002FA7 accent — decision nodes become blue DIAMONDS with white
+        text; emphasis / feedback edges turn blue;
+      · plain white modules with a light-grey hairline border and SHARP corners
+        (small radii -> 0; the terminal pill keeps its stadium shape);
+      · dark-grey text, light-grey connectors (soft, not heavy)."""
+    PAPER, INK, SUB, LINE, BORDER, IKB = \
+        "#FAFAF8", "#333333", "#737373", "#BDBDBD", "#D4D4D2", "#002FA7"
+    svg = re.sub(r'font-family="[^"]*"',
+                 "font-family=\"Inter, 'Noto Sans SC', 'Helvetica Neue', Arial, sans-serif\"", svg)
+    svg = re.sub(r'rx="([\d.]+)"', lambda m: 'rx="0"' if float(m.group(1)) <= 14 else m.group(0), svg)
+    svg = re.sub(r'(<rect width="\d+" height="\d+" )fill="[^"]*"', r'\1fill="' + PAPER + '"', svg, count=1)
+    # artistic dot-matrix layer (Guizang Swiss signature): faint IKB dots, 26px grid
+    wm = re.search(r'<svg[^>]*width="(\d+)"[^>]*height="(\d+)"', svg)
+    if wm:
+        sw, sh = wm.group(1), wm.group(2)
+        dots = (f'<defs><pattern id="gzdot" width="26" height="26" patternUnits="userSpaceOnUse">'
+                f'<circle cx="2" cy="2" r="1.35" fill="{IKB}" opacity="0.10"/></pattern></defs>'
+                f'<rect width="{sw}" height="{sh}" fill="url(#gzdot)"/>')
+        svg = re.sub(r'(<rect width="\d+" height="\d+" fill="' + re.escape(PAPER) + r'"/>)', r'\1' + dots, svg, count=1)
+    # doc title -> BIG, light, sans, CENTRED, size RELATIVE to the canvas width
+    _wt = re.search(r'width="(\d+)"', svg)
+    _W = int(_wt.group(1)) if _wt else 1000; _cx = _W // 2
+    _tfs = max(30, min(60, round(_W * 0.036)))
+    def _title(tm):
+        t = re.sub(r'font-weight="\d+"', 'font-weight="300"', tm.group(0))
+        t = re.sub(r' stroke="[^"]*"', '', t)
+        t = re.sub(r' stroke-width="[^"]*"', '', t)
+        t = re.sub(r'font-size="\d+"', f'font-size="{_tfs}"', t)   # relative, not absolute
+        t = re.sub(r'<text x="\d+"', f'<text x="{_cx}"', t)
+        return t
+    svg = re.sub(r'<text [^>]*stroke-width="0\.3"[^>]*>[^<]*</text>', _title, svg)
+
+    # gantt period bars -> colour BANDS: the emphasised span is a solid BLUE band,
+    # ordinary spans are GREY bands, together reading as "time elapsing".
+    def _spans(mm):
+        blk = mm.group(0).replace("#991B1B", "__EMPH__")
+        blk = re.sub(r'fill="#[0-9A-Fa-f]{6}"', 'fill="#C4C4C4"', blk)
+        return blk.replace("__EMPH__", IKB)
+    svg = re.sub(r'<g data-role="spans">.*?</g>', _spans, svg, flags=re.S)
+
+    def _node(mm):
+        b = mm.group(0)
+        if "<path" in b:                              # decision hexagon -> blue diamond + white text
+            d = re.search(r'<path d="([^"]*)"', b).group(1)
+            nums = re.findall(r'(-?\d+\.?\d*),(-?\d+\.?\d*)', d)
+            xs = [float(x) for x, _ in nums]; ys = [float(y) for _, y in nums]
+            L, R, T, Bt = min(xs), max(xs), min(ys), max(ys); cx = (L + R) / 2; cy = (T + Bt) / 2
+            dia = f'M {cx:.1f},{T:.1f} L {R:.1f},{cy:.1f} L {cx:.1f},{Bt:.1f} L {L:.1f},{cy:.1f} Z'
+            b = re.sub(r'<path d="[^"]*"[^>]*/>',
+                       f'<path d="{dia}" fill="{IKB}" stroke="{IKB}" stroke-width="1.4"/>', b)
+            b = re.sub(r'(<text\b[^>]*?) fill="[^"]*"', r'\1 fill="#FFFFFF"', b)
+        else:                                         # step / terminal / emphasised
+            rxm = re.search(r'rx="([\d.]+)"', b)
+            terminal = bool(rxm and float(rxm.group(1)) > 14)   # flow terminal (pill)
+            emph = 'data-emph="1"' in b                          # key relation node
+            blue = terminal or emph
+            fillc = IKB if blue else "#FFFFFF"
+            strokec = IKB if blue else BORDER
+            def _rect(rm):
+                r = re.sub(r' fill="[^"]*"', f' fill="{fillc}"', rm.group(0))
+                if "stroke=" in r:
+                    r = re.sub(r'stroke="[^"]*"', f'stroke="{strokec}"', r)
+                else:
+                    r = r[:-2] + f' stroke="{strokec}" stroke-width="1.3"/>'
+                return r
+            b = re.sub(r'<rect\b[^>]*?/>', _rect, b)
+            if blue:
+                b = re.sub(r'(<text\b[^>]*?) fill="[^"]*"', r'\1 fill="#FFFFFF"', b)
+            else:
+                b = re.sub(r'(<text\b[^>]*font-weight="700"[^>]*?) fill="[^"]*"', r'\1 fill="' + INK + '"', b)
+                b = re.sub(r'(<text\b(?![^>]*font-weight="700")[^>]*?) fill="[^"]*"', r'\1 fill="' + SUB + '"', b)
+        return b
+    svg = re.sub(r'<g data-role="node".*?</g>', _node, svg, flags=re.S)
+
+    # gantt period bars -> colour BANDS ("time elapsing"): key span = solid BLUE band,
+    # ordinary spans = grey bands; labels grey. Theme colours so nothing washes them out.
+    def _span(mm):
+        raw = mm.group(0); emph = "#991B1B" in raw
+        b = raw.replace('fill="#991B1B"', 'fill="__EMPH__"')
+        b = re.sub(r'(<rect\b[^>]*?) fill="#[0-9A-Fa-f]{6}"', r'\1 fill="#E0E0E0"', b)   # lighter grey band
+        b = b.replace("__EMPH__", IKB)
+        tc = "#FFFFFF" if emph else INK                                                  # white on blue band
+        sc = "#FFFFFF" if emph else SUB
+        b = re.sub(r'(<text\b[^>]*font-weight="600"[^>]*?) fill="[^"]*"', r'\1 fill="' + tc + '"', b)
+        b = re.sub(r'(<text\b(?![^>]*font-weight="600")[^>]*?) fill="[^"]*"', r'\1 fill="' + sc + '"', b)
+        return b
+    svg = re.sub(r'<g data-role="span" [^>]*?>.*?</g>', _span, svg, flags=re.S)
+
+    # timeline "time band" (axis): LIGHT-GREY + thicker; ticks & years DARK-GREY;
+    # connector stems match the band's grey; KEY events are blue blocks with white text.
+    axm = re.search(r'<rect data-role="axis"[^>]*y="([\d.]+)"[^>]*height="([\d.]+)"', svg)
+    if axm:
+        ay0 = float(axm.group(1)); ah = float(axm.group(2)); ay1 = ay0 + ah
+        new_h = ah + 8; nb = ay0 + new_h
+        svg = re.sub(r'(<rect data-role="axis"[^>]*?) fill="[^"]*"', r'\1 fill="#E0E0E0"', svg)
+        svg = re.sub(r'(<rect data-role="axis"[^>]* height=")[\d.]+(")',
+                     lambda m: m.group(1) + f'{new_h:.0f}' + m.group(2), svg)
+        def _line(lm):
+            ys = [float(v) for v in re.findall(r'y[12]="([\d.]+)"', lm.group(0))]
+            on_band = bool(ys) and min(ys) >= ay0 - 3 and max(ys) <= nb + 3   # BOTH ends inside band = tick
+            if on_band:                                   # tick: span full band, dark grey
+                l = re.sub(r'y1="[\d.]+"', f'y1="{ay0:.1f}"', lm.group(0))
+                l = re.sub(r'y2="[\d.]+"', f'y2="{nb:.1f}"', l)
+                return re.sub(r'stroke="[^"]*"', 'stroke="#737373"', l)
+            return re.sub(r'stroke="[^"]*"', 'stroke="#BDBDBD"', lm.group(0))  # stem: visible light grey
+        svg = re.sub(r'<line[^>]*/>', _line, svg)
+        def _yr(txm):
+            yy = re.search(r'y="([\d.]+)"', txm.group(0))
+            if yy and ay0 - 2 <= float(yy.group(1)) <= ay1 + 6:               # year: centre in band
+                t = re.sub(r'y="[\d.]+"', f'y="{ay0 + new_h / 2 + 4:.1f}"', txm.group(0))
+                return re.sub(r'fill="[^"]*"', f'fill="{INK}"', t)
+            return txm.group(0)
+        svg = re.sub(r'<text[^>]*>[^<]*</text>', _yr, svg)
+        # z-order: redraw the band (+ ticks + years) ON TOP of the stems, so each
+        # connector tucks BEHIND the band instead of crossing over it.
+        axblk = re.search(r'(<rect data-role="axis".*?)(?=<g data-role="event")', svg, re.S)
+        if axblk:
+            blk = axblk.group(1)
+            svg = svg.replace(blk, "", 1).replace("</svg>", blk + "</svg>", 1)
+    def _event(mm):
+        b = mm.group(0); emph = "#991B1B" in b
+        if emph:                                          # key event -> solid blue + white text
+            b = re.sub(r'(<rect\b[^>]*?) fill="[^"]*"', r'\1 fill="' + IKB + '"', b)
+            b = re.sub(r'(<rect\b[^>]*?) stroke="[^"]*"', r'\1 stroke="' + IKB + '"', b)
+            b = re.sub(r'(<text\b[^>]*?) fill="[^"]*"', r'\1 fill="#FFFFFF"', b)
+        else:                                             # normal -> white card + hairline
+            b = re.sub(r'(<rect\b[^>]*?) fill="[^"]*"', r'\1 fill="#FFFFFF"', b)
+            b = re.sub(r'(<rect\b[^>]*?) stroke="[^"]*"', r'\1 stroke="#D4D4D2"', b)
+            b = re.sub(r'(<text\b[^>]*font-weight="600"[^>]*?) fill="[^"]*"', r'\1 fill="' + SUB + '"', b)
+            b = re.sub(r'(<text\b(?![^>]*font-weight="600")[^>]*?) fill="[^"]*"', r'\1 fill="' + INK + '"', b)
+        return b
+    svg = re.sub(r'<g data-role="event".*?</g>', _event, svg, flags=re.S)
+
+    # ALL connectors + arrowheads are soft grey — no blue lines (blue = blocks only)
+    svg = re.sub(r'(<path d="[^"]*" fill="none" stroke=")#[0-9A-Fa-f]{6}(" stroke-width="[\d.]+")', r'\1' + LINE + r'\2', svg)
+    svg = re.sub(r'(<marker id="a[gr]".*?fill=")[^"]*(")', r'\1' + LINE + r'\2', svg, flags=re.S)
+    # remaining source-token colours (doc title, edge labels, red emphasis text)
+    svg = svg.replace("#1F2933", INK).replace("#6B7280", INK).replace("#991B1B", INK)
+
+    # numbers / English / labels -> IBM Plex Mono (Guizang's engineered Latin type);
+    # CJK stays sans. This is the distinctive "technical" texture.
+    MONO = "'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace"
+    def _mono(tm):
+        tag, content = tm.group(1), tm.group(2)
+        if content.strip() and not re.search(r'[\u2E80-\u9FFF\uFF00-\uFFEF\u3000-\u303F]', content):
+            if "font-family=" in tag:
+                tag = re.sub(r'font-family="[^"]*"', f'font-family="{MONO}"', tag)
+            else:
+                tag = "<text font-family=\"" + MONO + "\"" + tag[5:]
+        return tag + ">" + content + "</text>"
+    svg = re.sub(r'(<text\b[^>]*?)>([^<]*)</text>', _mono, svg, flags=re.S)
+
+    # any element STILL off-palette (timeline / gantt / comparison) -> blue / grey / white
+    THEME = {"#FAFAF8", "#333333", "#737373", "#BDBDBD", "#D4D4D2", "#E0E0E0", "#002FA7", "#FFFFFF"}
+    def _lum(c):
+        r, g, b = int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+        return (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    svg = re.sub(r'(<text\b[^>]*?fill=")(#[0-9A-Fa-f]{6})(")',
+                 lambda m: m.group(0) if m.group(2).upper() in THEME
+                 else m.group(1) + ("#FFFFFF" if _lum(m.group(2)) < 0.45 else INK) + m.group(3), svg)
+    svg = re.sub(r'stroke="(#[0-9A-Fa-f]{6})"',
+                 lambda m: m.group(0) if m.group(1).upper() in THEME else f'stroke="{LINE}"', svg)
+    svg = re.sub(r'fill="(#[0-9A-Fa-f]{6})"',
+                 lambda m: m.group(0) if m.group(1).upper() in THEME
+                 else (f'fill="{IKB}"' if _lum(m.group(1)) < 0.45 else 'fill="#FFFFFF"'), svg)
+
+    # reserve a TOP MARGIN (天头) for the big centred title: grow the canvas upward
+    # and slide all content down, so the title breathes instead of touching the edge.
+    sm = re.search(r'<svg[^>]*width="(\d+)"[^>]*height="(\d+)"[^>]*viewBox="0 0 \d+ (\d+)"', svg)
+    if sm:
+        Wv, Hv = int(sm.group(1)), int(sm.group(2)); TOP = 60
+        newH = Hv + TOP
+        svg = svg.replace(f'height="{Hv}"', f'height="{newH}"')          # svg + full-canvas rects
+        svg = svg.replace(f'viewBox="0 0 {Wv} {Hv}"', f'viewBox="0 0 {Wv} {newH}"')
+        dot_rect = f'<rect width="{Wv}" height="{newH}" fill="url(#gzdot)"/>'
+        if dot_rect in svg:
+            svg = svg.replace(dot_rect, dot_rect + f'<g transform="translate(0,{TOP})">', 1)
+        else:
+            svg = re.sub(r'(<rect width="' + str(Wv) + r'" height="' + str(newH) + r'" fill="#FAFAF8"/>)',
+                         r'\1' + f'<g transform="translate(0,{TOP})">', svg, count=1)
+        svg = svg.replace("</svg>", "</g></svg>", 1)
+    return svg
+
+
+def fit_title(svg):
+    """Wrap a doc title that is wider than the canvas.
+
+    Every renderer draws the title as one centred line. A long Chinese title on a
+    narrow figure (a comparison table, a short timeline) therefore runs off both
+    edges and gets clipped. Rather than shrink the type — which breaks the visual
+    standard — split it into balanced lines, push the rest of the drawing down by
+    the extra height, and grow the canvas to match. Verbatim: only line breaks are
+    inserted, never an edited or dropped character."""
+    tm = re.search(r'<text [^>]*stroke-width="0\.3"[^>]*>[^<]*</text>', svg)
+    if not tm:
+        return svg
+    tag = tm.group(0)
+    txt = re.search(r'>([^<]*)</text>', tag).group(1)
+    fsm = re.search(r'font-size="([\d.]+)"', tag)
+    wm = re.search(r'<svg[^>]*width="(\d+)"[^>]*height="(\d+)"', svg)
+    if not (fsm and wm and txt.strip()):
+        return svg
+    fs, W, H = float(fsm.group(1)), int(wm.group(1)), int(wm.group(2))
+    room = W - 80                                        # keep a margin either side
+    cw = lambda s: sum(fs if ord(c) > 0x2E80 else fs * 0.55 for c in s)
+    if cw(txt) <= room:
+        return svg
+    n = math.ceil(cw(txt) / room)                        # balanced lines
+    per = math.ceil(len(txt) / n)
+    lines, i = [], 0
+    while i < len(txt):
+        lines.append(txt[i:i + per]); i += per
+    ym = re.search(r'\by="([\d.]+)"', tag)
+    y0 = float(ym.group(1)) if ym else 44.0
+    lh = fs * 1.32
+    extra = int(lh * (len(lines) - 1))
+    xm = re.search(r'\bx="([-\d.]+)"', tag)
+    tx = xm.group(1) if xm else str(W // 2)
+    body = "".join(f'<tspan x="{tx}" dy="{0 if k == 0 else lh:.1f}">{ln}</tspan>'
+                   for k, ln in enumerate(lines))
+    newtag = re.sub(r'>([^<]*)</text>', ">" + body + "</text>", tag)
+    svg = svg.replace(tag, newtag, 1)
+    # push the drawing down and grow the canvas by the added title height
+    svg = svg.replace(f'height="{H}"', f'height="{H + extra}"')
+    svg = re.sub(r'(viewBox="0 0 \d+ )' + str(H) + r'"', r'\g<1>' + str(H + extra) + '"', svg)
+    head_end = svg.index(newtag) + len(newtag)
+    svg = (svg[:head_end] + f'<g transform="translate(0,{extra})">' +
+           svg[head_end:].replace("</svg>", "</g></svg>", 1))
+    return svg
+
+
+_GUIZANG_MODES = {"歸葬流", "归葬流", "guizang", "swiss", "ikb"}
+_MONO_MODES = {"白描", "baimiao", "bai-miao", "mono", "monochrome", "print", "court"}
+
+
+def _wants_mono(m, argv_mode):
+    return bool(argv_mode) or str(m.get("visual_mode", "")).strip().lower() in _MONO_MODES \
+        or m.get("visual_mode") == "白描"
+
+
+def main(mapfile, base="final", strict=False, mono=False, theme=None):
     m = load_map(mapfile)
     mod = choose(m)
     svg_path = base + ".svg"
+    vm = str(m.get("visual_mode", "")).strip().lower()
+    is_guizang = (theme == "guizang" or m.get("visual_mode") in ("歸葬流", "归葬流") or vm in _GUIZANG_MODES)
+    try:
+        mod._THEME = "guizang" if is_guizang else None   # renderers may adapt geometry (roomier boxes)
+    except Exception:
+        pass
     try:
         validate_map(m)
         svg, w, h = mod.render(m)
@@ -146,6 +434,13 @@ def main(mapfile, base="final", strict=False):
     except Exception as e:
         print(f"Error: {type(e).__name__}: {e}")
         return 1
+    svg = fit_title(svg)          # long titles wrap before any theme is applied
+    if is_guizang:
+        svg = to_guizang(svg)
+        print("mode: 歸葬流 (Guizang Swiss / IKB — online / lecture)")
+    elif _wants_mono(m, mono):
+        svg = to_monochrome(svg)
+        print("mode: 白描 (monochrome print / court)")
     open(svg_path, "w", encoding="utf-8").write(svg)
     print(f"SVG: {svg_path}  {w}x{h}")
     png_path = base + ".png"
@@ -154,6 +449,35 @@ def main(mapfile, base="final", strict=False):
         print(f"PNG: {png_path}  (via {engine})")
     except Exception as e:
         print(f"PNG skipped: {e}")
+    # editable draw.io export (additive; NEVER breaks the SVG/PNG deliverable).
+    # Node+edge layouts also get an editable .drawio and a .drawio.svg (a valid
+    # SVG that additionally opens editable in draw.io). Guarded end-to-end so any
+    # failure here is a skipped extra, not a broken render.
+    if m.get("layout") in export_drawio.SUPPORTED_LAYOUTS:
+        try:
+            mxfile, _, _ = export_drawio.build_model(m)
+            _dmode = "guizang" if is_guizang else ("baimiao" if _wants_mono(m, mono) else None)
+            _hub = None
+            if _dmode == "guizang" and m.get("edges") and m.get("nodes"):
+                _d = {n["id"]: 0 for n in m["nodes"]}
+                for _e in m["edges"]:
+                    if _e.get("from") in _d: _d[_e["from"]] += 1
+                    if _e.get("to") in _d: _d[_e["to"]] += 1
+                if _d:
+                    _hid = max(_d, key=lambda i: _d[i])
+                    _ids = [n["id"] for n in m["nodes"]]
+                    _hub = "c%d" % _ids.index(_hid)      # drawio cells are c0, c1, …
+            mxfile = export_drawio.theme_drawio(mxfile, _dmode, _hub)
+            drawio_path = base + ".drawio"
+            open(drawio_path, "w", encoding="utf-8").write(mxfile)
+            print(f"drawio: {drawio_path}  (editable)")
+            dsvg_path = base + ".drawio.svg"
+            open(dsvg_path, "w", encoding="utf-8").write(
+                export_drawio.embed_in_svg(svg, mxfile))
+            print(f"drawio: {dsvg_path}  (SVG + embedded editable model)")
+        except Exception as e:
+            print(f"drawio skipped: {e}")
+
     # semantic audit
     try:
         import audit
@@ -191,8 +515,12 @@ def _cli(argv):
         import lint
         return lint.main(argv[1])
     strict = "--strict" in argv
-    argv = [a for a in argv if a != "--strict"]
-    return main(argv[0], argv[1] if len(argv) > 1 else "final", strict=strict)
+    mono = any(a in ("--baimiao", "--mono", "--print", "--court", "--白描") for a in argv)
+    theme = "guizang" if any(a in ("--guizang", "--swiss", "--ikb", "--歸葬流", "--归葬流") for a in argv) else None
+    drop = ("--strict", "--baimiao", "--mono", "--print", "--court", "--白描",
+            "--guizang", "--swiss", "--ikb", "--歸葬流", "--归葬流")
+    argv = [a for a in argv if a not in drop]
+    return main(argv[0], argv[1] if len(argv) > 1 else "final", strict=strict, mono=mono, theme=theme)
 
 
 if __name__ == "__main__":

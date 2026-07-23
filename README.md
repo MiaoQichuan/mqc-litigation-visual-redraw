@@ -6,10 +6,18 @@
 <p align="center"><b>把法律画出来 · Make the Law Visible</b></p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/version-1.0.1-991B1B" alt="version 1.0.1"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-991B1B" alt="License: MIT"/></a>
   <img src="https://img.shields.io/badge/Python-3-555" alt="Python 3"/>
   <img src="https://img.shields.io/badge/dependencies-none%20(stdlib)-555" alt="zero third-party dependencies"/>
   <a href="https://github.com/MiaoQichuan/mqc-litigation-visual-redraw/actions/workflows/checks.yml"><img src="https://github.com/MiaoQichuan/mqc-litigation-visual-redraw/actions/workflows/checks.yml/badge.svg" alt="checks"/></a>
+  <img src="https://img.shields.io/badge/Built%20with-Claude-D97757?logo=anthropic&logoColor=white" alt="Built with Claude"/>
+  <img src="https://img.shields.io/badge/Claude-Skill-D97757?logo=anthropic&logoColor=white" alt="Claude Skill"/>
+  <img src="https://img.shields.io/badge/tests-90%20checks-2E7D32" alt="90 checks"/>
+  <img src="https://img.shields.io/badge/%E8%A7%86%E8%A7%89%E6%A8%A1%E5%BC%8F-%E5%A5%87%E5%B7%9D%E6%B5%81%20%C2%B7%20%E6%AD%B8%E8%91%AC%E6%B5%81%20%C2%B7%20%E7%99%BD%E6%8F%8F-555" alt="三种视觉模式"/>
+  <img src="https://img.shields.io/badge/%E5%9B%BE%E8%A1%A8%E7%B1%BB%E5%9E%8B-7-555" alt="7 种图表类型"/>
+  <img src="https://img.shields.io/badge/output-SVG%20%C2%B7%20PNG%20%C2%B7%20drawio-555" alt="output formats"/>
+  <img src="https://img.shields.io/badge/%E8%84%B1%E6%95%8F-PII%20scrubbed-991B1B" alt="脱敏"/>
 </p>
 
 ---
@@ -32,7 +40,8 @@ mqc-litigation-visual-redraw/
 ├── README.md · AUTHOR.md · CHANGELOG.md · LICENSE
 ├── assets/
 │   ├── style-tokens.json    冻结的视觉数值（颜色/字体/圆角…）
-│   └── fonts/README.md      标题宋体字体政策
+│   ├── fonts/README.md      标题宋体字体政策
+│   ├── screenshots/ · modes/     成品截图与三档对照图
 ├── schemas/
 │   └── semantic-map.schema.json   语义地图 JSON 契约（schema_version:1）
 ├── references/              规程与标准（英文）
@@ -40,12 +49,14 @@ mqc-litigation-visual-redraw/
 │   ├── extraction-guide.md  ★识别·分析·拆解 六步规程（含纯文字/手绘源）
 │   ├── semantic-map-schema.md · visual-style.md · fidelity-rules.md
 │   ├── flowchart-spec.md · relationship-spec.md · rendering-and-workflow.md
+│   └── visual-style.md      奇川流 / 白描 / 歸葬流 三档冻结标准
 ├── scripts/                 确定性渲染管线（模型只填 JSON、脚本算全部坐标）
-│   ├── render.py            调度 + CLI(validate/lint) + SVG→PNG
+│   ├── render.py            调度 + CLI(validate/lint) + 三档模式后处理 + SVG→PNG
 │   ├── common.py            token/字体/wrap(禁则+CJK)/校验/marker
-│   ├── render_points·dated·spans·flow·relation·tree.py   六个渲染器
+│   ├── render_points·dated·spans·flow·relation·tree·compare.py  七个渲染器
 │   ├── audit.py             交付摘要 + 提取门禁(CHECKPOINT)
-│   └── lint.py              渲染期视觉 lint（越界/非有限/对角/禁蓝…）
+│   ├── doctor.py            环境自检（裸仓库 clone 后第一步）
+│   └── lint.py              渲染期视觉 lint（越界/文字溢出/非有限/对角/离色板…）
 ├── examples/                8 份真实语义地图（覆盖 7 布局；单一真相源，测试直接引用）
 └── tests/
     ├── run_checks.py        回归（零依赖，退出码 0=全过）
@@ -56,7 +67,8 @@ mqc-litigation-visual-redraw/
 
 ## 能做什么
 
-三类图、七种布局，同一套克制视觉语言（灰阶 + 唯一深红 `#991B1B`，无蓝）：
+三类图、七种布局，**一套确定性工程 × 三种视觉模式**——布局与走线的规矩不变，
+表达按使用场景切换（奇川流 · 歸葬流 · 白描，详见下文「三种视觉模式」）：
 
 | 类型 | 布局 | 适用 |
 | --- | --- | --- |
@@ -70,7 +82,7 @@ mqc-litigation-visual-redraw/
 
 ## 成品示例
 
-下面是 `examples/` 直接渲染出的成品（标题宋体、正文黑体，灰阶 + 唯一深红 `#991B1B`）：
+`examples/` 直接渲染出的 **7 种图表类型**（下图为默认的 **奇川流**：宋体标题、灰阶 + 唯一深红 `#991B1B`）：
 
 <table>
   <tr>
@@ -112,6 +124,39 @@ mqc-litigation-visual-redraw/
   </tr>
 </table>
 
+### 同一张图 · 三种模式
+
+**同一套几何**（确定性布局 + 正交走线），换三种表达 —— 顺序均为
+**奇川流 · 歸葬流 · 白描**（流程图为横排，其余为竖排，自上而下）：
+
+| 图表类型 | 三档对照 |
+|---|---|
+| 流程图 | <img src="assets/modes/flowchart-3modes.png" width="820" alt="流程图三档"/> |
+| 关系图 · 网络 | <img src="assets/modes/relationship-3modes.png" width="560" alt="关系图三档"/> |
+| 关系图 · 层级树 | <img src="assets/modes/relation-tree-3modes.png" width="560" alt="层级树三档"/> |
+| 时间轴 · 编号型 | <img src="assets/modes/timeline-points-3modes.png" width="560" alt="编号时间轴三档"/> |
+| 时间轴 · 日期型 | <img src="assets/modes/timeline-dated-3modes.png" width="560" alt="日期时间轴三档"/> |
+| 时间轴 · 期间型 | <img src="assets/modes/timeline-gantt-3modes.png" width="560" alt="甘特三档"/> |
+| 关系图 · 对比表 | <img src="assets/modes/comparison-table-3modes.png" width="560" alt="对比表三档"/> |
+| **压力测试** · 密集关系图 | <img src="assets/modes/relation-dense-3modes.png" width="560" alt="密集关系图三档"/> |
+
+## 三种视觉模式
+
+同一套布局与走线**工程**（奇川流的规矩：确定性布局、正交走线、不穿节点、标签不压线），
+三种**艺术表达**，对应三种场景。奇川流是彩色母版；另两档只在被请求时通过后处理生效，
+母版逐字节不受影响。
+
+| 模式 | 触发 | 视觉 | 场景 |
+|---|---|---|---|
+| **奇川流** | 默认 | 宋体标题、灰阶 + 一处深红 `#991B1B`、圆角实心卡、决策圆角六边形 | 办案 / 个人品牌专业图 |
+| **白描** | `--baimiao`（别名 `--mono`/`--print`/`--court`）或 `"visual_mode":"白描"` | 纯黑白线稿：全部 `#111111`、纯色块变白底框线、几何与彩色版逐字节一致 | 法院 / 打印 / 正式卷宗 |
+| **歸葬流** | `--guizang`（别名 `--swiss`/`--ikb`）或 `"visual_mode":"歸葬流"` | 克莱因蓝 `#002FA7` + 浅灰 + 白，无衬线中文 + IBM Plex Mono 数字英文，直角发丝边、纯色蓝块白字、点阵底、大居中轻标题、更方模块 | 线上传播 / 讲课分享 |
+
+歸葬流的蓝色只落在**重点**上：流程图决策菱形与起终点、关系图枢纽、时间轴重点事件、
+甘特关键期间——一律蓝底白字；其余为中性灰 / 白。时间轴为浅灰加粗色带（深灰竖线贯穿、
+年份居中），连线藏于色带之后。冻结标准见 `references/visual-style.md`。三档并列示例见
+`examples/` 与展示图。
+
 ## 核心工程原则
 
 **模型只产出 JSON，绝不碰坐标。** 所有布局、防重叠、换行、渲染都交给确定性脚本——
@@ -127,6 +172,17 @@ mqc-litigation-visual-redraw/
    ```
    产出 `final.svg`（主交付、可编辑）+ `final.png`（预览/提交）+ 自检摘要
 4. 交付 SVG + PNG + 一行语义审计
+
+## 快速开始（裸仓库第一步）
+
+`git clone` 只带来代码，不带来它调用的系统工具（graphviz、光栅化器、字体）。
+先跑自检，它会告诉你缺什么、怎么装、缺了会退化成什么：
+
+```bash
+python3 scripts/doctor.py          # 环境自检（必需项缺失时退出码 1）
+python3 scripts/render.py examples/flowchart.json /tmp/out
+python3 tests/run_checks.py        # 回归自测
+```
 
 ## 依赖
 

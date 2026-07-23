@@ -94,8 +94,9 @@ from the model being clever about pixels.
    (3) transcribe **every character verbatim** — dates, labels, evidence numbers;
    do not normalize ("2023年5月左右" stays as is), paraphrase, or merge; (4) strip
    decoration (pie charts, waveforms, icons, flourishes) — this skill re-draws
-   STRUCTURE, it does not copy illustrations; (5) pick the single deep-red emphasis
-   (≤2); (6) when the source is dense, main structure goes in the diagram and
+   STRUCTURE, it does not copy illustrations; (5) do NOT choose emphasis yourself —
+   the deep-red accent is the USER's call, asked at the checkpoint, and defaults to
+   NONE (no red anywhere) if they skip it; (6) when the source is dense, main structure goes in the diagram and
    sub-notes go to `provenance` — do not cram. Anything you cannot read confidently
    goes into `provenance.uncertainties`, never into a guess.
 
@@ -103,26 +104,46 @@ from the model being clever about pixels.
    Preserve original numbering if present; you may add numbering for readability
    and must record that in `provenance`.
 
-3. **CHECKPOINT — confirm the decomposition before rendering.** Show the user the
-   extracted spine (the events/nodes/edges you read) and the `uncertainties`, and
-   ask them to confirm anything that could change the legal meaning (date order vs.
-   source order, unreadable labels, what the single emphasis should be, and — for a
-   messy/hand-drawn source — whether your read of the structure is right). This
-   checkpoint is **not optional** and matters most on a hand-drawn or dense source
-   and on weaker models whose transcription is less reliable; skip it only if the
-   user has explicitly said "just render it". See `references/extraction-guide.md`.
+3. **CHECKPOINT — one round of questions before rendering (not optional).** Ask the
+   user, together in one turn:
+   - **Structure** — show the extracted spine (the events/nodes/edges you read) and
+     the `uncertainties`; confirm anything that could change the legal meaning (date
+     vs. source order, unreadable labels, and — for a hand-drawn/messy source —
+     whether your read of the structure is right).
+   - **Emphasis (the red accent)** — ask which single element (one party / event /
+     edge), if any, should carry the deep-red emphasis. **If the user skips or
+     declines, use NO red anywhere** (`emphasis:false` on everything). Never choose
+     it for them.
+   - **Visual mode / scenario** — ask which of the three modes fits, framed by where
+     the figure will be used:
+     · **奇川流** (default) — casework / personal brand · colour;
+     · **白描** — court filing / print / exhibit · black-and-white line-art (`--baimiao`);
+     · **歸葬流** — online post / lecture / sharing · Klein-blue Swiss (`--guizang`).
+     If the scenario is already unambiguous from the request, state your pick and
+     proceed. In 歸葬流 / 白描 the red accent is re-expressed (blue block / black), so
+     the emphasis question still applies.
+   **Default when the user does not choose (skips a question, says "just render it",
+   or does not reply): 奇川流, and NO red anywhere.** Never invent an emphasis to
+   fill the gap — red appears only when the user names what it marks. Matters most
+   on hand-drawn/dense sources and weaker models. See `references/extraction-guide.md`.
 
-4. **Render deterministically.** From `scripts/`:
+4. **Render deterministically**, in the mode chosen at the checkpoint. From `scripts/`.
+   On an unfamiliar machine (a fresh clone), run `python3 scripts/doctor.py` first —
+   it reports missing tooling (graphviz, rasteriser, fonts) instead of failing obscurely:
    ```bash
-   python render.py <semantic-map.json> final
+   python render.py <semantic-map.json> final              # 奇川流 (colour, default)
+   python render.py <semantic-map.json> final --baimiao    # 白描 (court / print)
+   python render.py <semantic-map.json> final --guizang    # 歸葬流 (online / lecture)
    ```
-   This picks the layout, writes `final.svg` (primary, editable) and `final.png`
-   (preview/filing), and prints an audit summary. Never edit coordinates by
-   hand; if something is wrong, fix the JSON or the script, not the SVG output.
+   (Or set `"visual_mode":"白描"` / `"歸葬流"` in the JSON instead of a flag.) This
+   picks the layout, writes `final.svg` (primary, editable) and `final.png`
+   (preview/filing), and prints an audit summary. All three modes share ONE geometry
+   — only the surface differs. Never edit coordinates by hand; if something is wrong,
+   fix the JSON or the script, not the SVG. Mode standards: `references/visual-style.md`.
 
 5. **Deliver.** Hand over `final.svg` + `final.png` + a one-line audit summary
-   (elements preserved, emphasis used, any uncertainties). Keep the summary in
-   the reply / JSON — never draw it onto the image.
+   (elements preserved, **mode used**, **emphasis used or "none"**, any
+   uncertainties). Keep the summary in the reply / JSON — never draw it onto the image.
 
 ## Pick a layout
 

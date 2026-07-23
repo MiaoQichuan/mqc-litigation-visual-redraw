@@ -163,8 +163,10 @@ soffice→PDF→pdftoppm fallback). Pipeline gates, in order:
    run (a broken audit is a delivery defect).
 4. **lint** (`lint.py`) — final-SVG artifact check, **read-only, changes no visuals**:
    non-finite numbers, off-canvas boxes/anchors, arrows drawn as a single diagonal,
-   **rejected blue/slate colours** (the "no blue" standard, via a blacklist that does
-   NOT false-flag our mildly-cool neutral grays), marker `orient` sanity, well-formed
+   **rejected blue/slate colours** — the "no blue" standard **scoped to 奇川流**, the
+   colour master (歸葬流 legitimately uses Klein blue `#002FA7`; its own guard enforces
+   that palette instead) — via a blacklist that does
+   NOT false-flag our mildly-cool neutral grays, marker `orient` sanity, well-formed
    XML, and `url(#id)` reference integrity. Runs on every render; `--strict` makes a
    warning exit non-zero.
 
@@ -210,3 +212,35 @@ Stays **1.0.0 until first open-source release** (the CHANGELOG records iteration
 within 1.0.0). Author/footer: 缪奇川律师 · mqc-legal-skills.
 
 > **把法律画出来 · Make the Law Visible** ｜ 新诉讼可视化 New Litigation Visualization ｜ 缪奇川 出品 ｜ v1.0.0
+
+## Mode & emphasis defaults (frozen)
+
+- **Default mode is 奇川流** (colour master). 白描 and 歸葬流 engage only when the
+  user picks them (checkpoint answer, `visual_mode` in the JSON, or a CLI flag).
+- **Red is opt-in only.** The deep-red accent marks whatever the USER names at the
+  checkpoint. **If the user skips the question, says "just render it", or does not
+  reply, the figure carries NO red at all** — the model must never pick an emphasis
+  on its own to fill the gap. In 歸葬流 / 白描 the same user choice is re-expressed
+  (solid blue block / black), and the same opt-in rule applies.
+- The delivery summary always states the mode used and either the chosen emphasis
+  or "emphasis: none".
+
+## Long text / overflow handling (frozen)
+
+Legal titles and party names are long, so overflow is handled by the pipeline, not
+by asking the model to shorten anything (that would break the verbatim rule):
+
+- **Doc titles wrap automatically.** `fit_title` in `render.py` measures the title
+  against the canvas; if it is wider, it splits into balanced lines, pushes the
+  drawing down and grows the canvas. Only line breaks are inserted — never an edited
+  or dropped character. A title that already fits is left byte-identical.
+- **Node notes reserve their REAL height.** The relation renderer measures the
+  deepest wrapped note instead of assuming two lines, so a long note can no longer
+  run past the bottom of the canvas.
+- **`lint.py` checks rendered text EXTENT, not just the anchor.** A centred title
+  can have its anchor comfortably inside the canvas while its glyphs spill off both
+  edges; the linter now measures each string (CJK ≈ 1 em, Latin ≈ 0.55 em) against
+  the canvas and warns on real overflow.
+- Everything that genuinely cannot fit belongs in `provenance`, and the extraction
+  guide's rule still stands: **split a dense source into several diagrams** rather
+  than cramming one.

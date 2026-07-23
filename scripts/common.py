@@ -119,7 +119,7 @@ def load_map(path):
 
 
 SCHEMA_VERSION = 1
-_TOP_KEYS = {"schema_version", "diagram_type", "layout", "title_text", "axis",
+_TOP_KEYS = {"schema_version", "diagram_type", "layout", "title_text", "visual_mode", "axis",
              "axis_unit", "events", "spans", "points", "nodes", "edges",
              "engine", "direction", "arrows", "tall_leaves", "columns", "rows",
              "provenance"}
